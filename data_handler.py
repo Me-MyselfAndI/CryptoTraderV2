@@ -1,5 +1,6 @@
 # Regression Example With Boston Dataset: Standardized and Wider
-from keras import layers, optimizers, Sequential
+from tensorflow.keras import layers, Sequential
+from tensorflow.keras.optimizers import SGD, RMSprop, Nadam, Adadelta, Adagrad, Adam
 import random, numpy as np, pandas
 from sklearn.model_selection import train_test_split
 import robin_stocks.robinhood.crypto as rs
@@ -14,32 +15,51 @@ data_list = []
 data_np_array = data_frame.to_numpy()
 x_train, x_test, y_train, y_test = train_test_split(data_np_array, y[0], test_size=0.1)
 
-model = Sequential([
-    layers.Dense(100, input_dim=x_train.shape[1], activation='relu'),
-    layers.Dense(200, input_dim=100, activation='relu'),
-    layers.Dense(400, input_dim=200, activation='relu'),
-    layers.Dense(1, input_dim=400, activation='linear')
-])
+best_error = 1000000
 
-#optimizers.Adam(lr=0.0001, beta_1=0.9, amsgrad=False)
-model.compile(loss='mean_squared_error', optimizer='adam', metrics=['mse'])
-model.summary()
+for attempt in range (15):
+    neuron_amount = random.randint(5, round(x_train.shape[1]*2/3))
+    model = Sequential([
+        layers.Dense(neuron_amount, input_dim=x_train.shape[1], activation='relu'),
+        layers.Dense(neuron_amount, input_dim=neuron_amount, activation='relu'),
+        layers.Dense(1, input_dim=neuron_amount, activation='linear')
+    ])
 
-history = model.fit(x_train, y_train, epochs=4000, batch_size=500)
-history = model.fit(x_train, y_train, epochs=5000, batch_size=200)
-history = model.fit(x_train, y_train, epochs=4000, batch_size=100)
-history = model.fit(x_train, y_train, epochs=3000, batch_size=50)
 
-result = model.predict(x_test).tolist()
-result = [(result[i][0], y_test.tolist()[i], abs(result[i][0] - y_test.tolist()[i])/(y_test.tolist()[i]) if y_test.tolist()[i] != 0 else 0) for i in range(len(y_test))]
+    model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(), metrics=['mse'])
+    model.summary()
 
-errors = []
-for curr_res in result:
-    errors.append(curr_res[-1])
-    #to_print = "{%.7f}".format(curr_res[-1])
-    print(curr_res[:-1], "\t\t", round(curr_res[-1], 6))
 
-errors.sort()
-print(len(errors))
-print(errors)
-print("Median error:", errors[int(len(errors)/2)])
+    history = model.fit(x_train, y_train, epochs=200, batch_size=1500, verbose=0)
+
+
+    result = model.predict(x_test).tolist()
+    result = [(result[i][0], y_test.tolist()[i], abs(result[i][0] - y_test.tolist()[i])/(y_test.tolist()[i]) if y_test.tolist()[i] != 0 else 0) for i in range(len(y_test))]
+
+    errors = []
+    for curr_res in result:
+        errors.append(curr_res[-1])
+        #to_print = "{%.7f}".format(curr_res[-1])
+        print(curr_res[:-1], "\t\t", round(curr_res[-1], 6))
+
+    errors.sort()
+    median_error = errors[int(len(errors)/2)]
+    print(len(errors))
+    print(errors)
+    print("Median error:", median_error)
+
+    if best_error > median_error:
+        best_model_num = attempt
+        best_model = model
+        best_error = median_error
+        best_model_errors_list = errors
+
+print("\n\n\n\n\n\nBEST MODEL:\t", best_model_num)
+for error in best_model_errors_list:
+    print(error)
+
+median_error = best_model_errors_list[int(len(best_model_errors_list) / 2)]
+print(best_model_errors_list)
+print("Median error:", median_error)
+
+print("Median error:", best_error)
