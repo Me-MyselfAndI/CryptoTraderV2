@@ -32,9 +32,7 @@ data_file.write('\tbid')
 for i in range (coef_depth - 1):
     data_file.write('\t' + str(i))
 
-data_file.write("\task_pade")
-
-data_file.write('\tcheck\n')
+data_file.write("\task_pade\n")
 
 
 while True:
@@ -108,9 +106,8 @@ while True:
         for i in range(coef_depth - 1):
             temp_counter += 1
             data_file.write('\t' + str(bid_prices[i]))
-        data_file.write('\t' + str(ask_pade_results[-1]))
+        data_file.write('\t' + str(ask_pade_results[-1]) + "\n")
         temp_counter += 1
-        data_file.write("\t" + str(temp_counter) + '\n')
         print(temp_counter)
 
         ask_prices.pop(0)
