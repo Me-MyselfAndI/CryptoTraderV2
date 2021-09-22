@@ -7,7 +7,7 @@ import robin_stocks.robinhood as rs
 email = 'p.grigorii01@gmail.com'
 password = 'Alexpodoksik#66'
 code = 'BTC'
-precision = 5
+precision = 2
 dT = 5
 
 
