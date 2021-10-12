@@ -31,7 +31,7 @@ def convert_time_to_seconds(time):
 
 
 # HOW TO make an order, KNOWING the ticker, the price and the amount in USD:
-def order_crypto (code, price, amount):
+def order_crypto(code, price, amount):
     # If the amount is > 0:
     if amount > 0:
         # Send a limit purchase order
@@ -222,7 +222,7 @@ def cancel_garbage_orders():
             # Move the turtle away
 
 email = 'p.grigorii01@gmail.com'
-password = 'Ktyfrhjk#71'
+password = input("Enter the password")
 code = 'BTC'
 assets_price = 0
 equity = 0
