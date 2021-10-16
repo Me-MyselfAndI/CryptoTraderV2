@@ -6,6 +6,7 @@ from threading import Thread
 from data_handler import ModelBuilder
 from data_digger import DataDigger
 '''
+OLD VERSION
 # WHAT IS a Log:
 class Log:
     def __init__(self, time, price, crypto_amt):

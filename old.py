@@ -221,7 +221,7 @@ def cancel_garbage_orders():
 
             # Move the turtle away
 
-email = 'p.grigorii01@gmail.com'
+email = input ("Enter the email")
 password = input("Enter the password")
 code = 'BTC'
 assets_price = 0
