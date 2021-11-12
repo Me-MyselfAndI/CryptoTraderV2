@@ -5,7 +5,7 @@ from time import sleep
 import robin_stocks.robinhood as rs
 
 class DataDigger:
-    def __init__(self, file_name, asset_code, prediction_delay, precision=2, dT=5, coef_depth=10):
+    def __init__(self, file_name, asset_code, prediction_delay, precision=5, dT=5, coef_depth=10):
         self.code = asset_code
         self.precision = precision
         self.dT = dT
@@ -35,9 +35,8 @@ class DataDigger:
     def get_data_row(self, for_training=True):
         # Get the prices
         crypto_quote = rs.crypto.get_crypto_quote(self.code)
-        if for_training:
-            self.ask_prices.append(round(float(crypto_quote["ask_price"]), self.precision))
-            self.bid_prices.append(round(float(crypto_quote["bid_price"]), self.precision))
+        self.ask_prices.append(round(float(crypto_quote["ask_price"]), self.precision))
+        self.bid_prices.append(round(float(crypto_quote["bid_price"]), self.precision))
         print(f"\tAsk Price: ${round(float(crypto_quote['ask_price']), self.precision)}\n"
               f"\tBid Price: ${round(float(crypto_quote['bid_price']), self.precision)}")
 
@@ -84,9 +83,8 @@ class DataDigger:
             for i in range(len(ask_taylor_coefs)):
                 denominator_value += ask_pade_denominator[i] * ((2 * self.coef_depth) ** i)
             curr_ask_pade_prediction = numerator_value / denominator_value
-            if for_training:
-                self.ask_pade_predictions.pop(0)
-                self.ask_pade_predictions.append(curr_ask_pade_prediction)
+            self.ask_pade_predictions.pop(0)
+            self.ask_pade_predictions.append(curr_ask_pade_prediction)
 
             # Converting numerator and denominator of bid Pade approx. from polinomials to values at the required point
             numerator_value = 0
@@ -97,11 +95,10 @@ class DataDigger:
             for i in range(len(bid_taylor_coefs)):
                 denominator_value += bid_pade_denominator[i] * ((2 * self.coef_depth) ** i)
             curr_bid_pade_prediction = numerator_value / denominator_value
-            if for_training:
-                self.bid_pade_predictions.pop(0)
-                self.bid_pade_predictions.append(curr_bid_pade_prediction)
+            self.bid_pade_predictions.pop(0)
+            self.bid_pade_predictions.append(curr_bid_pade_prediction)
 
-            print(f"Pade approximations:\n\tAsk: ${curr_ask_pade_prediction}\n\tBid: ${curr_bid_pade_prediction}")
+            # print(f"Pade approximations:\n\tAsk: ${curr_ask_pade_prediction}\n\tBid: ${curr_bid_pade_prediction}")
 
             self.ask_prices.pop(0)
             self.bid_prices.pop(0)
@@ -113,8 +110,8 @@ class DataDigger:
                 bid_return_data.extend(self.bid_prices[:self.coef_depth-1])
                 pade_predictions_return = [self.ask_pade_predictions[-self.prediction_delay], self.bid_pade_predictions[-self.prediction_delay]]
             else:
-                ask_return_data = self.ask_prices[-self.coef_depth:]
-                bid_return_data = self.bid_prices[-self.coef_depth:]
+                ask_return_data = self.ask_prices[-self.coef_depth:-1]
+                bid_return_data = self.bid_prices[-self.coef_depth:-1]
                 pade_predictions_return = [self.ask_pade_predictions[-self.prediction_delay], self.bid_pade_predictions[-self.prediction_delay]]
 
             result = ask_return_data + bid_return_data + pade_predictions_return

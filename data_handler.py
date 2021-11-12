@@ -37,7 +37,8 @@ class ModelBuilder:
         # the following code creates several models and finds the best to avoid sticking inside local minima
         best_error = float("inf")
         all_errors = []
-        for attempt in range(num_folds):
+        attempt = 0
+        while attempt < num_folds:
             curr_x_train, curr_x_test, curr_y_train, curr_y_test = train_test_split(self.x_train, self.y_train,
                                                                                     test_size=0.2)
             # Create a model
@@ -51,33 +52,40 @@ class ModelBuilder:
             # compile and fit the model
             model.compile(loss='mean_squared_logarithmic_error', optimizer=RMSprop(learning_rate=0.002),
                           metrics=['mse'])
-            model.fit(curr_x_train, curr_y_train, epochs=300,
+            history = model.fit(curr_x_train, curr_y_train, epochs=300,
                       batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+            if (history.history['loss'][0] + history.history['loss'][1] + history.history['loss'][2]) / 3 > 1:
+                continue
+            print(end='|')
             # compile and fit the model
             model.compile(loss='mean_squared_logarithmic_error', optimizer=RMSprop(learning_rate=0.001),
                           metrics=['mse'])
             model.fit(curr_x_train, curr_y_train, epochs=700,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            print(end='->')
             # compile and fit the model
             model.compile(loss='mean_squared_logarithmic_error', optimizer=RMSprop(learning_rate=0.0005),
                           metrics=['mse'])
             model.fit(curr_x_train, curr_y_train, epochs=1200,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            print(end='->')
             # compile and fit the model
             model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.1), metrics=['mse'])
             model.fit(curr_x_train, curr_y_train, epochs=1000,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
             model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.01), metrics=['mse'])
             model.fit(curr_x_train, curr_y_train, epochs=3000,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            print(end='->')
             # compile and fit the model
             model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.005), metrics=['mse'])
             model.fit(curr_x_train, curr_y_train, epochs=3500,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            print(end='->|\n')
             # compile and fit the model
             model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.001), metrics=['mse'])
             model.fit(curr_x_train, curr_y_train, epochs=4000,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
 
             # Test the model on the TESTING data and record the result
             result = model.predict(curr_x_test).tolist()
@@ -104,6 +112,7 @@ class ModelBuilder:
                 best_model_errors_list = errors
                 best_result = result
             all_errors.append(avg_error)
+            attempt += 1
 
         # Print some stats about the best model
         print("\n\n\n\n\n\nBEST MODEL:\t", best_model_num)
