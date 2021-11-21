@@ -2,7 +2,7 @@ import numpy
 import pyotp, robin_stocks.robinhood as rs
 from time import sleep
 from threading import Thread
-import datetime
+from _datetime import datetime
 
 from robin_stocks.orders import order_crypto
 
@@ -43,7 +43,7 @@ def cancel_garbage_orders(cancel_time_threshold, garbage_dT):
 class TradingBot:
     data_digger = None
 
-    def __init__(self, data_file_name, asset_code, num_trials=1500, num_folds=10,
+    def __init__(self, data_file_name, asset_code, num_trials=150, num_folds=10,
                  test_ratio=0.15):
         self.data_file_name = data_file_name
         self.temp_file_name = "temp_" + data_file_name
@@ -86,21 +86,22 @@ class TradingBot:
         curr_data = False
         while not curr_data:
             curr_data = self.data_digger.get_data_row(for_training=False)
+            curr_data = self.sell_model_builder.reshape_row(curr_data)
             curr_data_numpy = numpy.array([curr_data])
         try:
-            buy_prediction = self.buy_model.predict(curr_data_numpy)
-            sell_prediction = self.sell_model.predict(curr_data_numpy)
+            buy_prediction = self.buy_model.predict(curr_data_numpy.reshape(1, 18))
+            sell_prediction = self.sell_model.predict(curr_data_numpy.reshape(1, 18))
         except Exception as exception:
             print(exception)
             return False
         print(f"\nBuy price prediction:\t${buy_prediction[0][0]}\nSell price prediction:\t${sell_prediction[0][0]}")
 
-        return curr_data_numpy[0][self.data_digger.coef_depth - 1], curr_data_numpy[0][2*(self.data_digger.coef_depth - 1)], buy_prediction, sell_prediction
+        return buy_prediction, sell_prediction
 
 def repeatedly_update_table(bot):
     while True:
         print('\u001b[33m\n\n\nUPDATING TABLE\n\n\n')
-        bot.update_table(num_trials=450)
+        bot.update_table(num_trials=150)
         print("\n\n\nFINISHED UPDATING TABLE\u001b[0m\n\n\n")
 
 
@@ -118,6 +119,8 @@ def main():
     totp = pyotp.TOTP("YHYPKMLAURGON3I2").now()
     rs.login(email, password, mfa_code=totp)
 
+    prices_log = []
+
     asset_code = 'BTC'
     minimal_sell_balance = 10
     initial_available_balance = 50
@@ -129,7 +132,9 @@ def main():
     cancel_time_threshold = 150
 
     # Process 0: cancel expired orders
-    cancel_garbage_orders_thread = Thread(target=cancel_garbage_orders, kwargs={'cancel_time_threshold': cancel_time_threshold, 'garbage_dT': garbage_dT})
+    cancel_garbage_orders_thread = Thread(target=cancel_garbage_orders, daemon=True,
+                                          kwargs={'cancel_time_threshold': cancel_time_threshold, 'garbage_dT': garbage_dT})
+    cancel_garbage_orders_thread.start()
 
     bot = TradingBot(r"coefs.csv", asset_code, num_trials=100, num_folds=3)
     # Process 1: analyze data and update the table
@@ -141,8 +146,9 @@ def main():
     model_update_thread.start()
 
     # Process 3: update prices, predict and initiate transactions
-    def make_imaginary_trade(balances):
-        if curr_price['ask'] < predictions['bid'] and balances['USD'] > minimal_sell_balance:
+    def make_trade(balances):
+        verdict_buy, verdict_sell = 'no', 'no'
+        if predictions['ask'] > 15 and balances['USD'] > minimal_sell_balance:
             # buy
             #balances[asset_code] += balances['USD'] / 2 / curr_price['ask']
             #balances['USD'] /= 2
@@ -151,7 +157,8 @@ def main():
                                                           limitPrice=curr_price['ask'])
             '''
             response = rs.order_buy_crypto_by_price(symbol=asset_code, amountInDollars=round(balances['USD'] / 3, 2))
-        if curr_price['bid'] > predictions['ask'] and balances[asset_code] > 0:
+            verdict_buy = 'yes'
+        if predictions['bid'] < -15 and balances[asset_code] > 0:
             # sell
             #balances['USD'] += balances[asset_code] * curr_price['bid']
             #balances[asset_code] = 0
@@ -160,19 +167,32 @@ def main():
                                                              quantity=balances[asset_code], limitPrice=curr_price['bid'])
             '''
             response = rs.order_sell_crypto_by_quantity(symbol=asset_code, quantity=balances[asset_code],)
+            verdict_sell = 'yes'
+
+        #ask_price_old, bid_price_old = curr_price['ask'], curr_price['bid']
+        ask_price_prediction, bid_price_prediction = predictions['ask'], predictions['bid']
+        sleep(100)
+        #ask_price_new, bid_price_new = curr_price['ask'], curr_price['bid']
+        prices_log.append({
+            #'ask_old': ask_price_old, 'bid_old': bid_price_old,
+            'ask_prediction': ask_price_prediction, 'bid_prediction': bid_price_prediction,
+            #'ask_new': ask_price_new, 'bid_new': bid_price_new,
+            'bought': verdict_buy, 'sold': verdict_sell
+        })
 
     while True:
         prediction_response = bot.get_prediction()
-        curr_price = {'ask': prediction_response[0], 'bid': prediction_response[1]}
-        predictions = {'ask': prediction_response[2][0][0], 'bid': prediction_response[3][0][0]}
+        #curr_price = {'ask': prediction_response[0], 'bid': prediction_response[1]}
+        predictions = {'ask': prediction_response[0][0][0], 'bid': prediction_response[1][0][0]}
         print(f"\u001b[34mPredictions are available:\n{bot.get_prediction()}\u001b[0m")
 
         balances = {'USD': float(rs.profiles.load_account_profile()["crypto_buying_power"]) - balance_offset, asset_code: float(locate_position_by_code(asset_code)["quantity"]) - equity_offset}
         print(f"Balance: ${balances['USD']}, BTC {balances[asset_code]}")
-        imaginary_trade_thread = Thread(target=make_imaginary_trade, args=[balances])
-        imaginary_trade_thread.start()
-        sleep(80)
-
+        trade_thread = Thread(target=make_trade, args=[balances])
+        trade_thread.start()
+        sleep(100)
+        for log_item in prices_log:
+            print(log_item)
 
 if __name__ == "__main__":
     main()

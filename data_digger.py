@@ -4,6 +4,8 @@ import pyotp, math
 from time import sleep
 import robin_stocks.robinhood as rs
 
+
+
 class DataDigger:
     def __init__(self, file_name, asset_code, prediction_delay, precision=5, dT=5, coef_depth=10):
         self.code = asset_code
@@ -21,8 +23,8 @@ class DataDigger:
         self.ask_prices, self.bid_prices = [], []
 
         # Predictions by Pade approximation
-        self.ask_pade_predictions = [0 for i in range(self.coef_depth * 2 + 20)]
-        self.bid_pade_predictions = [0 for i in range(self.coef_depth * 2 + 20)]
+        self.ask_pade_predictions = [0 for i in range(self.coef_depth * 2 + self.prediction_delay + 1)]
+        self.bid_pade_predictions = [0 for i in range(self.coef_depth * 2 + self.prediction_delay + 1)]
 
 
         # Initial number of predictions are very wrong, since they
@@ -43,14 +45,16 @@ class DataDigger:
         # Functions that get ask and bid prices
         # Needed since Pade requires a continious function, and the price cannot
         # be obtained at non-integer indices of the list
-        def get_ask_price_at(x):
-            below, above = self.ask_prices[math.floor(x)], self.ask_prices[math.ceil(x)]
+        def get_ask_price_change_at(x):
+            below, above = self.ask_prices[math.floor(x+1)] - self.ask_prices[math.floor(x)], \
+                           self.ask_prices[math.ceil(x+1)] - self.ask_prices[math.ceil(x)]
             if math.ceil(x) == x:
                 return above
             return (above - below) / (math.ceil(x) - math.floor(x)) * (x - math.floor(x)) + below
 
-        def get_bid_price_at(x):
-            below, above = self.bid_prices[math.floor(x)], self.bid_prices[math.ceil(x)]
+        def get_bid_price_change_at(x):
+            below, above = self.bid_prices[math.floor(x+1)] - self.bid_prices[math.floor(x)], \
+                           self.bid_prices[math.ceil(x+1)] - self.bid_prices[math.ceil(x)]
             if math.ceil(x) == x:
                 return above
             return (above - below) / (math.ceil(x) - math.floor(x)) * (x - math.floor(x)) + below
@@ -58,9 +62,9 @@ class DataDigger:
         sleep(self.dT)
 
         if len(self.ask_prices) > self._threshold_to_start_filling_table + self.prediction_delay:
-            ask_taylor_coefs = [spm.derivative(get_ask_price_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
+            ask_taylor_coefs = [spm.derivative(get_ask_price_change_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
                                 for i in range(self.coef_depth)]
-            bid_taylor_coefs = [spm.derivative(get_bid_price_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
+            bid_taylor_coefs = [spm.derivative(get_bid_price_change_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
                                 for i in range(self.coef_depth)]
             print(ask_taylor_coefs)
             print(bid_taylor_coefs)
@@ -98,8 +102,6 @@ class DataDigger:
             self.bid_pade_predictions.pop(0)
             self.bid_pade_predictions.append(curr_bid_pade_prediction)
 
-            # print(f"Pade approximations:\n\tAsk: ${curr_ask_pade_prediction}\n\tBid: ${curr_bid_pade_prediction}")
-
             self.ask_prices.pop(0)
             self.bid_prices.pop(0)
 
@@ -126,11 +128,11 @@ class DataDigger:
         self.data_file = open(self.file_name, 'w')
         self.data_file.write('ask')
         for i in range(self.coef_depth - 1):
-            self.data_file.write('\t' + str(i))
+            self.data_file.write('\ta' + str(i))
 
         self.data_file.write('\tbid')
         for i in range(self.coef_depth - 1):
-            self.data_file.write('\t' + str(i))
+            self.data_file.write('\tb' + str(i))
 
         self.data_file.write("\task_pade\tbid_pade\n")
 
@@ -138,7 +140,7 @@ class DataDigger:
         for trial in range(1, num_trials + self._threshold_to_start_filling_table + 1):
             print (f"\nPrices #{trial + 1}")
             last_row_data = self.get_data_row()
-            if last_row_data:
+            if last_row_data and trial > self.coef_depth:
                 # Write everything into the data table
                 temp_counter = 1
                 self.data_file.write(str(self.ask_prices[-self.prediction_delay - 1]))
@@ -148,17 +150,14 @@ class DataDigger:
                 self.data_file.write("\t" + str(self.bid_prices[-self.prediction_delay - 1]))
                 temp_counter += 1
                 for i in range(self.coef_depth - 1):
+
                     temp_counter += 1
                     self.data_file.write('\t' + str(self.bid_prices[i]))
                 self.data_file.write('\t' + str(self.ask_pade_predictions[-self.prediction_delay]) + '\t' +
                                      str(self.bid_pade_predictions[-self.prediction_delay]) + "\n")
                 temp_counter += 2
                 print(last_row_data)
-            ''' # MOVED ABOVE
-                self.ask_prices.pop(0)
-                self.bid_prices.pop(0)
-            sleep(self.dT)                
-            '''
+
         self.data_file.close()
 
 
@@ -169,8 +168,8 @@ def main():
     totp = pyotp.TOTP("YHYPKMLAURGON3I2").now()
     rs.login(email, password, mfa_code=totp)
 
-    data_digger = DataDigger(r"temp_coefs.csv", asset_code='BTC', prediction_delay=10)
-    data_digger.fill_data_table(1000)
+    data_digger = DataDigger(r"coefs.csv", asset_code='BTC', prediction_delay=100)
+    data_digger.fill_data_table(500)
 
 if __name__ == "__main__":
     main ()

@@ -1,7 +1,12 @@
+import pyotp
 from tensorflow.keras import layers, Sequential
 from tensorflow.keras.optimizers import SGD, Adagrad, Adam, Nadam, RMSprop
 from sklearn.model_selection import train_test_split, StratifiedKFold as KFold
 import random, pandas
+
+import numpy
+import robin_stocks.robinhood as rs
+from data_digger import DataDigger
 
 
 class ModelBuilder:
@@ -13,9 +18,11 @@ class ModelBuilder:
     """
     def __init__(self, file, dimension, test_ratio=0.1):
         # Create a Pandas DataFrame to extract data from the CSV
-        self.data_frame = pandas.read_csv(file, sep="\t")
-        self.data_frame = self.data_frame.iloc[:-1, :]
-        self.data_frame = self.data_frame.sample(frac=1).reset_index(drop=True)
+        self.raw_data_frame = pandas.read_csv(file, sep="\t")
+        self.raw_data_frame = self.raw_data_frame.iloc[20:-1, :]
+        self.raw_data_frame = self.raw_data_frame.sample(frac=1).reset_index(drop=True)
+
+        self.data_frame = self.reshape_table()
 
         # Set the Y value to the "ask" and "bid" prices
         y = self.data_frame[dimension]
@@ -24,6 +31,43 @@ class ModelBuilder:
         # Divide the data into the train and test data
         self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.data_frame.to_numpy(), y,
                                                                                 test_size=test_ratio)
+    def reshape_row (self, data_row):
+        data_row = list(data_row)
+        raw_width = len(data_row)
+        new_row_values = []
+        # Change the ask prices
+        for col_num in range(int(raw_width / 2 - 2)):
+            new_row_values.append(data_row[col_num] - data_row[col_num + 1])
+        # Change the bid prices
+        for col_num in range(int(raw_width / 2) - 1, raw_width - 3):
+            new_row_values.append(data_row[col_num] - data_row[col_num + 1])
+
+        new_row_values.extend(data_row[-2:])
+        return new_row_values
+
+
+    def reshape_table (self):
+        raw_height, raw_width = self.raw_data_frame.shape
+
+        data_frame = pandas.DataFrame(columns=['ask'] + [('a' + str(i)) for i in range(int(raw_width / 2) - 3)] +
+                                                   ['bid'] + [('b' + str(i)) for i in range(int(raw_width / 2) - 3)] +
+                                                   ['ask_pade', 'bid_pade'])
+        # Extract delta_price (price change) from prices
+        for row_num in range(raw_height):
+            curr_row = self.raw_data_frame.iloc[row_num]
+            column_names = list(self.raw_data_frame.columns)
+
+            new_row_values = []
+            # Change the ask prices
+            for col_num in range(int(raw_width / 2 - 2)):
+                new_row_values.append(curr_row.iloc[col_num] - curr_row.iloc[col_num + 1])
+            # Change the bid prices
+            for col_num in range(int(raw_width / 2) - 1, raw_width - 3):
+                new_row_values.append(curr_row.iloc[col_num] - curr_row.iloc[col_num + 1])
+            new_row_values.extend(curr_row[-2:])
+            data_frame.loc[row_num] = new_row_values
+
+        return data_frame
 
     """
     Compiles a particular number of models and selects the best 
@@ -46,48 +90,36 @@ class ModelBuilder:
             model = Sequential([
                 layers.Dense(neurons_per_layer, input_dim=curr_x_train.shape[1], activation='relu'),
                 layers.Dense(neurons_per_layer, input_dim=neurons_per_layer, activation='relu'),
+#                layers.Dense(neurons_per_layer, input_dim=neurons_per_layer, activation='relu'),
                 layers.Dense(1, input_dim=neurons_per_layer, activation='linear')
             ])
 
             # compile and fit the model
-            model.compile(loss='mean_squared_logarithmic_error', optimizer=RMSprop(learning_rate=0.002),
-                          metrics=['mse'])
-            history = model.fit(curr_x_train, curr_y_train, epochs=300,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
-            if (history.history['loss'][0] + history.history['loss'][1] + history.history['loss'][2]) / 3 > 1:
-                continue
+            model.compile(loss='huber', optimizer=RMSprop(learning_rate=0.005),
+                          metrics=['mae'])
+            history = model.fit(curr_x_train, curr_y_train, epochs=500,
+                                batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            # If average is more than a threshold
+            #if sum(history.history['loss']) > 35 * len(history.history['loss']):
+            #    print("\n\n\n\n\n\n\n\nStuck in a local min\n\n\n\n\n\n\n\n")
+            #    continue
             print(end='|')
+
             # compile and fit the model
-            model.compile(loss='mean_squared_logarithmic_error', optimizer=RMSprop(learning_rate=0.001),
-                          metrics=['mse'])
-            model.fit(curr_x_train, curr_y_train, epochs=700,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            model.compile(loss='huber', optimizer=RMSprop(learning_rate=0.002),
+                          metrics=['mae'])
+            history = model.fit(curr_x_train, curr_y_train, epochs=100,
+                                batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
             print(end='->')
+
             # compile and fit the model
-            model.compile(loss='mean_squared_logarithmic_error', optimizer=RMSprop(learning_rate=0.0005),
-                          metrics=['mse'])
-            model.fit(curr_x_train, curr_y_train, epochs=1200,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
-            print(end='->')
-            # compile and fit the model
-            model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.1), metrics=['mse'])
+            model.compile(loss='huber', optimizer=SGD(learning_rate=0.00002),
+                          metrics=['mae'])
             model.fit(curr_x_train, curr_y_train, epochs=1000,
                       batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
-            model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.01), metrics=['mse'])
-            model.fit(curr_x_train, curr_y_train, epochs=3000,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
-            print(end='->')
-            # compile and fit the model
-            model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.005), metrics=['mse'])
-            model.fit(curr_x_train, curr_y_train, epochs=3500,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
-            print(end='->|\n')
-            # compile and fit the model
-            model.compile(loss='mean_squared_logarithmic_error', optimizer=SGD(learning_rate=0.001), metrics=['mse'])
-            model.fit(curr_x_train, curr_y_train, epochs=4000,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            print(end='|')
 
-            # Test the model on the TESTING data and record the result
+            # Run the model on the testing data and record the result
             result = model.predict(curr_x_test).tolist()
             result = [(result[i][0], curr_y_test.tolist()[i],
                        abs(result[i][0] - curr_y_test.tolist()[i]) / (curr_y_test.tolist()[i])
@@ -96,7 +128,7 @@ class ModelBuilder:
             # Find the average error
             errors = []
             for curr_res in result:
-                errors.append(curr_res[-1])
+                errors.append(abs(curr_res[-1]))
                 print(curr_res[:-1], "\t\t", round(curr_res[-1], 6))
             errors.sort()
             avg_error = sum(errors) / len(errors)
@@ -127,10 +159,9 @@ class ModelBuilder:
 
         return best_model
 
-
 if __name__ == "__main__":
-    ask_model_builder = ModelBuilder(r"data.csv", 'ask', test_ratio=0.15)
-    ask_model = ask_model_builder.make_model(num_folds=15)
+    ask_model_builder = ModelBuilder(r"coefs.csv", 'ask', test_ratio=0.15)
+    ask_model = ask_model_builder.make_model(num_folds=5)
 
     x_test, y_test = ask_model_builder.x_test, ask_model_builder.y_test
     ask_results = ask_model.predict(x_test)
@@ -142,8 +173,8 @@ if __name__ == "__main__":
     avg_ask_error = sum(ask_errors) / len(ask_errors)
     median_ask_error = ask_errors[int(round(len(ask_errors) / 2))]
 
-    bid_model_builder = ModelBuilder(r"data.csv", 'bid', test_ratio=0.15)
-    bid_model = bid_model_builder.make_model(num_folds=15)
+    bid_model_builder = ModelBuilder(r"coefs.csv", 'bid', test_ratio=0.15)
+    bid_model = bid_model_builder.make_model(num_folds=5)
 
     x_test, y_test = bid_model_builder.x_test, bid_model_builder.y_test
     bid_results = bid_model.predict(x_test)
@@ -160,3 +191,18 @@ if __name__ == "__main__":
 
     print("Average bid error:\t", avg_bid_error)
     print("Median bid error:\t", median_bid_error)
+
+
+    totp = pyotp.TOTP("YHYPKMLAURGON3I2").now()
+    rs.login('p.grigorii01@gmail.com', 'Alexpodoksik#66', mfa_code=totp)
+    data_digger = DataDigger(r"temp_coefs.csv", asset_code='BTC', prediction_delay=100)
+    data_digger.fill_data_table(100)
+
+    i = 0
+    while True:
+        i += 1
+        try:
+            print(ask_model.predict(numpy.array(ask_model_builder.reshape_row(data_digger.get_data_row(for_training=False))).reshape(1, 18)))
+        except Exception as e:
+            print(e)
+            print('waited', i, 'times')
