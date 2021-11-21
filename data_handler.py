@@ -1,10 +1,13 @@
-import pyotp
-from tensorflow.keras import layers, Sequential
-from tensorflow.keras.optimizers import SGD, Adagrad, Adam, Nadam, RMSprop
-from sklearn.model_selection import train_test_split, StratifiedKFold as KFold
-import random, pandas
+import math
 
-import numpy
+import pyotp, numpy, random, pandas
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Dense, Dropout, LSTM, BatchNormalization
+from tensorflow.keras.optimizers import SGD, Adagrad, Adam, Nadam, RMSprop
+
+from sklearn.model_selection import train_test_split, StratifiedKFold as KFold
+from sklearn.preprocessing import MinMaxScaler
+
 import robin_stocks.robinhood as rs
 from data_digger import DataDigger
 
@@ -23,14 +26,34 @@ class ModelBuilder:
         self.raw_data_frame = self.raw_data_frame.sample(frac=1).reset_index(drop=True)
 
         self.data_frame = self.reshape_table()
-
         # Set the Y value to the "ask" and "bid" prices
         y = self.data_frame[dimension]
         # Remove Y from the data_frame
         self.data_frame = self.data_frame.drop("ask", axis=1).drop("bid", axis=1)
+
+        raw_height, raw_width = self.data_frame.shape
+        self.min_x, self.max_x = [math.inf for i in range (raw_width)], [-math.inf for i in range (raw_width)]
+        for i in range(raw_height):
+            for j in range (raw_width):
+                if self.data_frame.iloc[i, j] > self.max_x[j]:
+                    self.max_x[j] = self.data_frame.iloc[i, j]
+                if self.data_frame.iloc[i, j] < self.min_x[j]:
+                    self.min_x[j] = self.data_frame.iloc[i, j]
+
+        for row_num in range(raw_height):
+            curr_row = self.data_frame.iloc[row_num]
+            new_row_values = []
+
+            for col_num in range(raw_width):
+                new_row_values.append((curr_row.iloc[col_num] - self.min_x[col_num])/(self.max_x[col_num] - self.min_x[col_num]))
+            self.data_frame.loc[row_num] = new_row_values
+
         # Divide the data into the train and test data
         self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.data_frame.to_numpy(), y,
                                                                                 test_size=test_ratio)
+        #self.x_train = numpy.reshape(self.x_train, (self.x_train.shape[0], 1, self.x_train.shape[1]))
+        #self.x_test = numpy.reshape(self.x_test, (self.x_test.shape[0], 1, self.x_test.shape[1]))
+
     def reshape_row (self, data_row):
         data_row = list(data_row)
         raw_width = len(data_row)
@@ -43,6 +66,10 @@ class ModelBuilder:
             new_row_values.append(data_row[col_num] - data_row[col_num + 1])
 
         new_row_values.extend(data_row[-2:])
+
+        for col_num in range(len(new_row_values)):
+            new_row_values[col_num] = (new_row_values[col_num] - self.min_x[col_num]) / (self.max_x[col_num] - self.min_x[col_num])
+
         return new_row_values
 
 
@@ -55,7 +82,6 @@ class ModelBuilder:
         # Extract delta_price (price change) from prices
         for row_num in range(raw_height):
             curr_row = self.raw_data_frame.iloc[row_num]
-            column_names = list(self.raw_data_frame.columns)
 
             new_row_values = []
             # Change the ask prices
@@ -84,21 +110,30 @@ class ModelBuilder:
         attempt = 0
         while attempt < num_folds:
             curr_x_train, curr_x_test, curr_y_train, curr_y_test = train_test_split(self.x_train, self.y_train,
-                                                                                    test_size=0.2)
+                                                                    test_size=0.2)
             # Create a model
             neurons_per_layer = random.randint(round(curr_x_train.shape[1] / 3), round(curr_x_train.shape[1]))
             model = Sequential([
-                layers.Dense(neurons_per_layer, input_dim=curr_x_train.shape[1], activation='relu'),
-                layers.Dense(neurons_per_layer, input_dim=neurons_per_layer, activation='relu'),
-#                layers.Dense(neurons_per_layer, input_dim=neurons_per_layer, activation='relu'),
-                layers.Dense(1, input_dim=neurons_per_layer, activation='linear')
+                Dense(neurons_per_layer, input_dim=curr_x_train.shape[1], activation='relu'),
+                Dropout(0.1),
+                Dense(neurons_per_layer, input_dim=neurons_per_layer, activation='relu'),
+                Dropout(0.1),
+                Dense(1, input_dim=neurons_per_layer, activation='linear')
+                #LSTM(neurons_per_layer, activation='relu', return_sequences=True),
+                #Dropout(0.2),
+                #LSTM(neurons_per_layer, activation='relu'),
+                #Dropout(0.2),
+                #Dense(neurons_per_layer, activation='relu'),
+                #Dropout(0.2),
+                #Dense(1, input_dim=neurons_per_layer, activation='softmax')
             ])
 
             # compile and fit the model
-            model.compile(loss='huber', optimizer=RMSprop(learning_rate=0.005),
+            model.compile(loss='huber', optimizer=RMSprop(learning_rate=5e-3, decay=1e-6),
                           metrics=['mae'])
-            history = model.fit(curr_x_train, curr_y_train, epochs=500,
-                                batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            model.fit(curr_x_train, curr_y_train, epochs=5000,
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
+
             # If average is more than a threshold
             #if sum(history.history['loss']) > 35 * len(history.history['loss']):
             #    print("\n\n\n\n\n\n\n\nStuck in a local min\n\n\n\n\n\n\n\n")
@@ -106,17 +141,10 @@ class ModelBuilder:
             print(end='|')
 
             # compile and fit the model
-            model.compile(loss='huber', optimizer=RMSprop(learning_rate=0.002),
+            model.compile(loss='huber', optimizer=SGD(learning_rate=4e-5, decay=1e-9),
                           metrics=['mae'])
-            history = model.fit(curr_x_train, curr_y_train, epochs=100,
-                                batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
-            print(end='->')
-
-            # compile and fit the model
-            model.compile(loss='huber', optimizer=SGD(learning_rate=0.00002),
-                          metrics=['mae'])
-            model.fit(curr_x_train, curr_y_train, epochs=1000,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=0)
+            model.fit(curr_x_train, curr_y_train, epochs=8000,
+                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
             print(end='|')
 
             # Run the model on the testing data and record the result
@@ -160,8 +188,9 @@ class ModelBuilder:
         return best_model
 
 if __name__ == "__main__":
+    rs.login(input("Enter Login Email:\t"), input("Enter Password:\t"), mfa_code=totp)
     ask_model_builder = ModelBuilder(r"coefs.csv", 'ask', test_ratio=0.15)
-    ask_model = ask_model_builder.make_model(num_folds=5)
+    ask_model = ask_model_builder.make_model(num_folds=3)
 
     x_test, y_test = ask_model_builder.x_test, ask_model_builder.y_test
     ask_results = ask_model.predict(x_test)
@@ -174,7 +203,7 @@ if __name__ == "__main__":
     median_ask_error = ask_errors[int(round(len(ask_errors) / 2))]
 
     bid_model_builder = ModelBuilder(r"coefs.csv", 'bid', test_ratio=0.15)
-    bid_model = bid_model_builder.make_model(num_folds=5)
+    bid_model = bid_model_builder.make_model(num_folds=3)
 
     x_test, y_test = bid_model_builder.x_test, bid_model_builder.y_test
     bid_results = bid_model.predict(x_test)
@@ -194,7 +223,6 @@ if __name__ == "__main__":
 
 
     totp = pyotp.TOTP("YHYPKMLAURGON3I2").now()
-    rs.login('p.grigorii01@gmail.com', 'Alexpodoksik#66', mfa_code=totp)
     data_digger = DataDigger(r"temp_coefs.csv", asset_code='BTC', prediction_delay=100)
     data_digger.fill_data_table(100)
 
