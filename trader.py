@@ -58,7 +58,7 @@ class TradingBot:
         if self.data_digger is not None:
             self.data_digger.data_file.close()
 
-        new_data_digger = DataDigger(self.temp_file_name, self.asset_code, 20)
+        new_data_digger = DataDigger(self.temp_file_name, self.asset_code, 100)
         new_data_digger.fill_data_table(num_trials=num_trials)
 
         temp_data_file = open(self.temp_file_name, 'r')
@@ -89,8 +89,8 @@ class TradingBot:
             curr_data = self.sell_model_builder.reshape_row(curr_data)
             curr_data_numpy = numpy.array([curr_data])
         try:
-            buy_prediction = self.buy_model.predict(curr_data_numpy.reshape(1, 18))
-            sell_prediction = self.sell_model.predict(curr_data_numpy.reshape(1, 18))
+            buy_prediction = self.buy_model.predict(curr_data_numpy)#curr_data_numpy.reshape(1, 18))
+            sell_prediction = self.sell_model.predict(curr_data_numpy)#curr_data_numpy.reshape(1, 18))
         except Exception as exception:
             print(exception)
             return False
@@ -101,7 +101,7 @@ class TradingBot:
 def repeatedly_update_table(bot):
     while True:
         print('\u001b[33m\n\n\nUPDATING TABLE\n\n\n')
-        bot.update_table(num_trials=150)
+        bot.update_table(num_trials=250)
         print("\n\n\nFINISHED UPDATING TABLE\u001b[0m\n\n\n")
 
 
@@ -136,7 +136,7 @@ def main():
                                           kwargs={'cancel_time_threshold': cancel_time_threshold, 'garbage_dT': garbage_dT})
     cancel_garbage_orders_thread.start()
 
-    bot = TradingBot(r"coefs.csv", asset_code, num_trials=100, num_folds=3)
+    bot = TradingBot(r"coefs.csv", asset_code, num_trials=100, num_folds=6)
     # Process 1: analyze data and update the table
     table_update_thread = Thread(target=repeatedly_update_table, kwargs={"bot": bot}, daemon=True)
     table_update_thread.start()
@@ -148,7 +148,7 @@ def main():
     # Process 3: update prices, predict and initiate transactions
     def make_trade(balances):
         verdict_buy, verdict_sell = 'no', 'no'
-        if predictions['ask'] > 15 and balances['USD'] > minimal_sell_balance:
+        if predictions['ask'] > 5 and balances['USD'] > minimal_sell_balance:
             # buy
             #balances[asset_code] += balances['USD'] / 2 / curr_price['ask']
             #balances['USD'] /= 2
@@ -158,7 +158,7 @@ def main():
             '''
             response = rs.order_buy_crypto_by_price(symbol=asset_code, amountInDollars=round(balances['USD'] / 3, 2))
             verdict_buy = 'yes'
-        if predictions['bid'] < -15 and balances[asset_code] > 0:
+        if predictions['bid'] < -5 and balances[asset_code] > 0:
             # sell
             #balances['USD'] += balances[asset_code] * curr_price['bid']
             #balances[asset_code] = 0
