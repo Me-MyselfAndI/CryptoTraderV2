@@ -157,8 +157,8 @@ def main():
     totp = pyotp.TOTP("YHYPKMLAURGON3I2").now()
     rs.login(email, password, mfa_code=totp)
 
-    data_digger = DataDigger(r"coefs.csv", asset_code='BTC', prediction_delay=100)
-    data_digger.fill_data_table(500)
+    data_digger = DataDigger(r"data.csv", asset_code='BTC', prediction_delay=20)
+    data_digger.fill_data_table(1500)
 
 if __name__ == "__main__":
     main ()

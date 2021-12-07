@@ -1,4 +1,4 @@
-import math
+import math, statistics
 
 import pyotp, numpy, random, pandas
 from tensorflow.keras import Sequential
@@ -12,6 +12,17 @@ import robin_stocks.robinhood as rs
 from data_digger import DataDigger
 
 
+def evaluate_prediction_quality(prediction_row, expected_row):
+    max_prediction, max_prediction_index, max_expected, max_expected_index = 0, -1, 0, -1
+    for i, prediction, expected in zip(range(len(prediction_row)), prediction_row, expected_row):
+        if prediction > max_prediction:
+            max_prediction = prediction
+            max_prediction_index = i
+        if expected > max_expected:
+            max_expected = expected
+            max_expected_index = i
+    return max_expected_index == max_prediction_index
+
 class ModelBuilder:
     """
     Creates a model builder
@@ -19,17 +30,46 @@ class ModelBuilder:
     :param dimension: column to use as Y ("ask" or "bid")
     :param test_ratio: percentage of input rows split out for testing (not used in model training)
     """
-    def __init__(self, file, dimension, test_ratio=0.1):
+    def __init__(self, file, test_ratio=0.3, verbose=0):
         # Create a Pandas DataFrame to extract data from the CSV
         self.raw_data_frame = pandas.read_csv(file, sep="\t", index_col=False)
         self.raw_data_frame = self.raw_data_frame.iloc[:-1, :]
         self.raw_data_frame = self.raw_data_frame.sample(frac=1).reset_index(drop=True)
 
         self.data_frame = self.reshape_table()
+        num_buy, num_sell, num_hold = 0, 0, 0
+        for i in range(self.data_frame.shape[0]):
+            if self.data_frame.iloc[i, 0] == 1:
+                num_buy += 1
+            elif self.data_frame.iloc[i, 1] == 1:
+                num_sell += 1
+            else:
+                num_hold += 1
+
+        min_x_trials_amount = statistics.median([num_hold, num_buy, num_sell])
+        num_buy = min_x_trials_amount
+        num_sell = min_x_trials_amount
+        num_hold = min_x_trials_amount
+        temp_data_frame = pandas.DataFrame(columns=self.data_frame.columns)
+        for i in range(self.data_frame.shape[0]):
+            if self.data_frame.iloc[i, 0] == 1 and num_buy > 0:
+                num_buy -= 1
+                temp_data_frame = temp_data_frame.append(self.data_frame.iloc[i])
+            elif self.data_frame.iloc[i, 1] == 1 and num_sell > 0:
+                num_sell -= 1
+                temp_data_frame = temp_data_frame.append(self.data_frame.iloc[i])
+            elif self.data_frame.iloc[i, 2] == 1 and num_hold > 0:
+                num_hold -= 1
+                temp_data_frame = temp_data_frame.append(self.data_frame.iloc[i])
+            elif num_buy <= 0 and num_sell <= 0 and num_hold <= 0:
+                break
+
+        self.data_frame = temp_data_frame
+
         # Set the Y value to the "ask" and "bid" prices
-        y = self.data_frame[dimension]
+        y = [self.data_frame['buy'], self.data_frame['sell'], self.data_frame['hold']]
         # Remove Y from the data_frame
-        self.data_frame = self.data_frame.drop("ask", axis=1).drop("bid", axis=1)
+        self.data_frame = self.data_frame.drop("buy", axis=1).drop("sell", axis=1).drop("hold", axis=1)
 
         raw_height, raw_width = self.data_frame.shape
         self.min_x, self.max_x = [math.inf for i in range (raw_width)], [-math.inf for i in range (raw_width)]
@@ -40,59 +80,61 @@ class ModelBuilder:
                 if self.data_frame.iloc[i, j] < self.min_x[j]:
                     self.min_x[j] = self.data_frame.iloc[i, j]
 
+        temp_data_frame = self.data_frame
         for row_num in range(raw_height):
             curr_row = self.data_frame.iloc[row_num]
             new_row_values = []
 
             for col_num in range(raw_width):
                 new_row_values.append((curr_row.iloc[col_num] - self.min_x[col_num])/(self.max_x[col_num] - self.min_x[col_num]))
-            self.data_frame.loc[row_num] = new_row_values
+            temp_data_frame.iloc[row_num] = new_row_values
+        self.data_frame = temp_data_frame
 
         # Divide the data into the train and test data
-        self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.data_frame.to_numpy(), y,
-                                                                                test_size=test_ratio)
+        self.x_train, self.x_test, self.y_train, self.y_test = train_test_split(self.data_frame.to_numpy(),
+                                                                                pandas.DataFrame(y).T, test_size=test_ratio)
+
+        self.verbose = verbose
 
         #self.x_train = numpy.reshape(self.x_train, (self.x_train.shape[0], 1, self.x_train.shape[1]))
         #self.x_test = numpy.reshape(self.x_test, (self.x_test.shape[0], 1, self.x_test.shape[1]))
 
-    def reshape_row (self, data_row):
+    def reshape_row(self, data_row):
         data_row = list(data_row)
         raw_width = len(data_row)
         new_row_values = []
 
-        for col_num in range(1, int(raw_width / 2)):
-            new_row_values.append(data_row[col_num] - data_row[col_num - 1])
-        # Change the bid prices
-        for col_num in range(int(raw_width / 2) + 1, raw_width):
-            new_row_values.append(data_row[col_num] - data_row[col_num - 1])
-
-        #new_row_values.extend(data_row[-2:])
-
-        for col_num in range(len(new_row_values)):
+        for col_num in range(raw_width):
+            new_row_values.append(data_row[col_num])
+        # new_row_values.extend(curr_row[-2:])
+        for col_num in range(raw_width):
             new_row_values[col_num] = (new_row_values[col_num] - self.min_x[col_num]) / (self.max_x[col_num] - self.min_x[col_num])
+        return pandas.DataFrame(new_row_values).T
 
-        return new_row_values
-
-    def reshape_table (self):
+    def reshape_table(self):
         raw_height, raw_width = self.raw_data_frame.shape
-        data_frame = pandas.DataFrame(columns=['ask'] + [('a' + str(i)) for i in range(int(raw_width / 2) - 2)] +
-                                                   ['bid'] + [('b' + str(i)) for i in range(int(raw_width / 2) - 2)])
-        """
-        + ['ask_pade', 'bid_pade'])
-        """
+        data_frame = pandas.DataFrame(columns=['buy', 'sell', 'hold'] +
+                                              [('a' + str(i)) for i in range(int(raw_width / 2) - 1)] +
+                                              [('b' + str(i)) for i in range(int(raw_width / 2) - 1)])
+
         # Extract delta_price (price change) from prices
         for row_num in range(raw_height):
             curr_row = self.raw_data_frame.iloc[row_num]
             new_row_values = []
 
             # Change the ask prices
-            new_row_values.append(curr_row.iloc[0] - curr_row.iloc[int(raw_width / 2) - 1])
-            for col_num in range(2, int(raw_width / 2)):
-                new_row_values.append(curr_row.iloc[col_num] - curr_row.iloc[col_num - 1])
+            delta_price = {'ask': curr_row.iloc[0] - curr_row.iloc[int(raw_width / 2) - 1],
+                           'bid': curr_row.iloc[int(raw_width / 2)] - curr_row.iloc[raw_width - 1]}
+            delta_price['overall'] = (delta_price['ask'] + delta_price['bid'])/2
+
+            new_row_values.append(1 if delta_price['overall'] > 20.0 else 0)   # whether to buy
+            new_row_values.append(1 if delta_price['overall'] < -20.0 else 0)   # whether to sell
+            new_row_values.append(1 if -20.0 <= delta_price['overall'] <= 20.0 else 0)    # whether to hold
+            for col_num in range(1, int(raw_width / 2)):
+                new_row_values.append(curr_row.iloc[col_num])
             # Change the bid prices
-            new_row_values.append(curr_row.iloc[int(raw_width / 2)] - curr_row.iloc[raw_width - 1])
-            for col_num in range(int(raw_width / 2)+2, raw_width):
-                new_row_values.append(curr_row.iloc[col_num] - curr_row.iloc[col_num - 1])
+            for col_num in range(int(raw_width / 2) + 1, raw_width):
+                new_row_values.append(curr_row.iloc[col_num])
             #new_row_values.extend(curr_row[-2:])
             data_frame.loc[row_num] = new_row_values
 
@@ -117,11 +159,11 @@ class ModelBuilder:
             # Create a model
             neurons_per_layer = random.randint(round(curr_x_train.shape[1] / 3), round(curr_x_train.shape[1]))
             model = Sequential([
-                Dense(1200, input_dim=curr_x_train.shape[1], activation='relu'),
+                Dense(500, input_shape=curr_x_train.shape, activation='relu'),
                 Dropout(0.08),
-                Dense(1200, input_dim=neurons_per_layer, activation='relu'),
+                Dense(500, input_dim=500, activation='relu'),
                 Dropout(0.04),
-                Dense(1, input_dim=neurons_per_layer, activation='linear')
+                Dense(3, input_dim=500, activation='softmax')
                 #LSTM(512, activation='relu', return_sequences=True),
                 #Dropout(0.2),
                 #LSTM(512, activation='relu'),
@@ -129,46 +171,38 @@ class ModelBuilder:
             ])
 
             # compile and fit the model
-            print(f"\nTraining the model: Fold {attempt+1}/{num_folds}")
-            model.compile(loss='mse', optimizer=RMSprop(learning_rate=8e-3, decay=2e-4),
-                          metrics=['mse', 'mae'])
-            model.fit(curr_x_train, curr_y_train, epochs=random.randint(15, 50)*100,
-                      batch_size=70, verbose=0)
+            if self.verbose >= 1:
+                print(f"\nTraining the model: Fold {attempt+1}/{num_folds}")
+            model.compile(loss='categorical_crossentropy', optimizer=RMSprop(learning_rate=random.randint(1, 5)*1e-4, decay=random.randint(1, 9)*1e-6),
+                          metrics=['accuracy'])
+            model.fit(curr_x_train, curr_y_train, epochs=random.randint(10, 40)*100,
+                      batch_size=200, verbose=0)
 
-            """
-            # compile and fit the model
-            model.compile(loss='mse', optimizer=SGD(learning_rate=1e-4, decay=1e-6),
-                          metrics=['mse', 'mae'])
-            model.fit(curr_x_train, curr_y_train, epochs=1500,
-                      batch_size=min(1500, int(curr_y_train.size / 2)), verbose=2)
-            """
-
-            # If average is more than a threshold
-            # if sum(history.history['loss']) > 35 * len(history.history['loss']):
-            #    print("\n\n\n\n\n\n\n\nStuck in a local min\n\n\n\n\n\n\n\n")
-            #    continue
+            if self.verbose >= 1:
+                print(f"Finsihed Training")
 
 
             # Run the model on the testing data and record the result
-            result = model.predict(curr_x_test).tolist()
-            result = [(result[i][0], curr_y_test.tolist()[i],
-                       abs(result[i][0] - curr_y_test.tolist()[i]) / (curr_y_test.tolist()[i])
-                       if curr_y_test.tolist()[i] != 0 else 0) for i in range(len(curr_y_test))]
+            result = model.predict(curr_x_test)
 
-            # Find the average error
+            result = [(result[i], curr_y_test.iloc[i], evaluate_prediction_quality(result[i], curr_y_test.iloc[i])) for i in range(len(result))]
+
+            # Find the percentage of correct
             errors = []
             for curr_res in result:
-                errors.append(abs(curr_res[-1]))
-                print(curr_res[:-1], "\t\t", round(curr_res[-1], 6))
-            errors.sort()
-            avg_error = sum(errors) / len(errors)
+                errors.append(1 if curr_res[-1] else 0)
+                print(curr_res[:-1], "\t\t", curr_res[-1])
+            #errors.sort()
+            avg_error = 1 - sum(errors) / len(errors)
 
-            # Print the errors and average
-            print(errors)
-            print(f"Average Error - Trial #{attempt + 1}:\t{round(avg_error, 8)}")
+            if self.verbose == 2:
+                # Print the errors and average
+                print(errors)
+            if self.verbose >= 1:
+                print(f"Average Error - Trial #{attempt + 1}:\t{round(avg_error, 8)}")
             # If the average error is better than the currently best average error, save this as a new best model
-            if best_error > avg_error:
-                best_model_num = "model num currently omitted"
+            if avg_error < best_error:
+                best_model_num = attempt
                 best_model = model
                 best_error = avg_error
                 best_model_errors_list = errors
@@ -176,63 +210,57 @@ class ModelBuilder:
             all_errors.append(avg_error)
             attempt += 1
 
-        # Print some stats about the best model
-        print("\n\n\n\n\n\nBEST MODEL within the last K folds:\t", best_model_num)
+        if self.verbose == 2:
+            # Print some stats about the best model
+            print("\n\n\n\n\n\nBEST MODEL within the last K folds:\t", best_model_num)
         for error in best_model_errors_list:
             print(error)
         median_error = best_model_errors_list[int(round(len(best_model_errors_list)) / 2)]
-        for result in best_result:
-            print(result)
-        print("Best median error:", median_error)
-        print("Best average error:", best_error)
-        print("FINISHED")
+
+        if self.verbose == 2:
+            for result in best_result:
+                print(result)
+        if self.verbose >= 1:
+            print("Best median error:", median_error)
+            print("Best average error:", best_error)
+            print("FINISHED")
 
         return best_model
+
 
 if __name__ == "__main__":
     totp = pyotp.TOTP("YHYPKMLAURGON3I2").now()
     rs.login(input("Enter Login Email:\t"), input("Enter Password:\t"), mfa_code=totp)
-    ask_model_builder = ModelBuilder(r"coefs.csv", 'ask', test_ratio=0.15)
-    ask_model = ask_model_builder.make_model(num_folds=10)
+    ask_model_builder = ModelBuilder(r"temp_coefs.csv", test_ratio=0.2, verbose=2)
+    ask_model = ask_model_builder.make_model(num_folds=15)
 
     x_test, y_test = ask_model_builder.x_test, ask_model_builder.y_test
     ask_results = ask_model.predict(x_test)
     ask_errors = []
-    for expected, resulting in zip(y_test, ask_results):
-        print(expected, resulting)
-        ask_errors.append(abs((resulting - expected) / expected))
+    for i in range(len(y_test)):
+        ask_errors.append(1 if evaluate_prediction_quality(ask_results[i], y_test.iloc[i]) else 0)
 
-    avg_ask_error = sum(ask_errors) / len(ask_errors)
+    avg_ask_error = 1 - sum(ask_errors) / len(ask_errors)
     median_ask_error = ask_errors[int(round(len(ask_errors) / 2))]
 
-    bid_model_builder = ModelBuilder(r"coefs.csv", 'bid', test_ratio=0.15)
-    bid_model = bid_model_builder.make_model(num_folds=10)
+    print("Average error:\t", avg_ask_error)
+    print("Median error:\t", median_ask_error)
 
-    x_test, y_test = bid_model_builder.x_test, bid_model_builder.y_test
-    bid_results = bid_model.predict(x_test)
-    bid_errors = []
-    for expected, resulting in zip(y_test, bid_results):
-        print(expected, resulting)
-        bid_errors.append(abs((resulting - expected) / expected))
+    data_digger = DataDigger(r"temp_coefs.csv", asset_code='BTC', dT=1, prediction_delay=20)
+    data_digger.fill_data_table(2000)
 
-    avg_bid_error = sum(bid_errors) / len(bid_errors)
-    median_bid_error = bid_errors[int(round(len(bid_errors) / 2))]
-
-    print("Average ask error:\t", avg_ask_error)
-    print("Median ask error:\t", median_ask_error)
-
-    print("Average bid error:\t", avg_bid_error)
-    print("Median bid error:\t", median_bid_error)
-
-
-    data_digger = DataDigger(r"temp_coefs.csv", asset_code='BTC', prediction_delay=100)
-    data_digger.fill_data_table(100)
-
+    log = []
     i = 0
     while True:
         i += 1
         try:
-            print(ask_model.predict(numpy.array(ask_model_builder.reshape_row(data_digger.get_data_row(for_training=False))).reshape(1, 18)))
+            print(i)
+            prediction = ask_model.predict(ask_model_builder.reshape_row(data_digger.get_data_row(for_training=False)))[0]
+            log.append((prediction, i))
+            print("Prediction:\t", prediction)
+            if len(log) >= 20:
+                log.pop(0)
+                print(f"\n{i-20}'th price:\t{log[0]}")
         except Exception as e:
             print(e)
             print('waited', i, 'times')

@@ -43,8 +43,7 @@ def cancel_garbage_orders(cancel_time_threshold, garbage_dT):
 class TradingBot:
     data_digger = None
 
-    def __init__(self, data_file_name, asset_code, num_trials=150, num_folds=10,
-                 test_ratio=0.15):
+    def __init__(self, data_file_name, asset_code, num_trials=150, num_folds=10, test_ratio=0.15):
         self.data_file_name = data_file_name
         self.temp_file_name = "temp_" + data_file_name
 
@@ -58,7 +57,7 @@ class TradingBot:
         if self.data_digger is not None:
             self.data_digger.data_file.close()
 
-        new_data_digger = DataDigger(self.temp_file_name, self.asset_code, 100)
+        new_data_digger = DataDigger(self.temp_file_name, self.asset_code, dT=5, prediction_delay=100)
         new_data_digger.fill_data_table(num_trials=num_trials)
 
         temp_data_file = open(self.temp_file_name, 'r')
@@ -74,34 +73,25 @@ class TradingBot:
         self.data_digger = new_data_digger
 
     def train_models(self, num_folds=10, test_ratio=0.15):
-        self.buy_model_builder = ModelBuilder(self.data_file_name, "ask",
-                                              test_ratio=test_ratio)  # ask === price for which others sell it (program buys it)
-        self.sell_model_builder = ModelBuilder(self.data_file_name, "bid",
-                                               test_ratio=test_ratio)  # bid === price for which others buy it (program sells it)
-
-        self.buy_model = self.buy_model_builder.make_model(num_folds=num_folds)
-        self.sell_model = self.sell_model_builder.make_model(num_folds=num_folds)
+        self.model_builder = ModelBuilder(self.data_file_name, test_ratio=test_ratio)
+        self.model = self.model_builder.make_model(num_folds=num_folds)
 
     def get_prediction(self):
-        curr_data = False
-        while not curr_data:
-            curr_data = self.data_digger.get_data_row(for_training=False)
-            curr_data = self.sell_model_builder.reshape_row(curr_data)
-            curr_data_numpy = numpy.array([curr_data])
+        curr_data = self.data_digger.get_data_row(for_training=False)
+        curr_data = self.model_builder.reshape_row(curr_data)
         try:
-            buy_prediction = self.buy_model.predict(curr_data_numpy)#curr_data_numpy.reshape(1, 18))
-            sell_prediction = self.sell_model.predict(curr_data_numpy)#curr_data_numpy.reshape(1, 18))
+            buy_prediction = self.model.predict(curr_data)
         except Exception as exception:
             print(exception)
             return False
-        print(f"\nBuy price prediction:\t${buy_prediction[0][0]}\nSell price prediction:\t${sell_prediction[0][0]}")
+        print(f"\nBuy price prediction:\t${buy_prediction[0][0]}")
 
-        return buy_prediction, sell_prediction
+        return buy_prediction
 
 def repeatedly_update_table(bot):
     while True:
         print('\u001b[33m\n\n\nUPDATING TABLE\n\n\n')
-        bot.update_table(num_trials=250)
+        bot.update_table(num_trials=1500)
         print("\n\n\nFINISHED UPDATING TABLE\u001b[0m\n\n\n")
 
 
@@ -136,7 +126,7 @@ def main():
                                           kwargs={'cancel_time_threshold': cancel_time_threshold, 'garbage_dT': garbage_dT})
     cancel_garbage_orders_thread.start()
 
-    bot = TradingBot(r"coefs.csv", asset_code, num_trials=100, num_folds=6)
+    bot = TradingBot(r"coefs.csv", asset_code, num_trials=1000, num_folds=20)
     # Process 1: analyze data and update the table
     table_update_thread = Thread(target=repeatedly_update_table, kwargs={"bot": bot}, daemon=True)
     table_update_thread.start()
@@ -148,49 +138,38 @@ def main():
     # Process 3: update prices, predict and initiate transactions
     def make_trade(balances):
         verdict_buy, verdict_sell = 'no', 'no'
-        if predictions['ask'] > 5 and balances['USD'] > minimal_sell_balance:
+        max_prediction = max(predictions['buy'], predictions['sell'], predictions['hold'])
+        avg_prediction = (predictions['buy'] + predictions['sell'] + predictions['hold'])/3
+        if predictions['buy'] == max_prediction and predictions['buy'] > avg_prediction * 1.25 and balances['USD'] > minimal_sell_balance:
             # buy
-            #balances[asset_code] += balances['USD'] / 2 / curr_price['ask']
-            #balances['USD'] /= 2
-            '''
-            response = rs.order_buy_crypto_limit_by_price(symbol=asset_code, amountInDollars=round(balances['USD'] / 3, 2),
-                                                          limitPrice=curr_price['ask'])
-            '''
             response = rs.order_buy_crypto_by_price(symbol=asset_code, amountInDollars=round(balances['USD'] / 3, 2))
             verdict_buy = 'yes'
-        if predictions['bid'] < -5 and balances[asset_code] > 0:
+        if predictions['sell'] == max_prediction and predictions['sell'] > avg_prediction * 1.25 and balances[asset_code] > 0:
             # sell
-            #balances['USD'] += balances[asset_code] * curr_price['bid']
-            #balances[asset_code] = 0
-            '''
-            response = rs.order_sell_crypto_limit_by_quantity(symbol=asset_code,
-                                                             quantity=balances[asset_code], limitPrice=curr_price['bid'])
-            '''
             response = rs.order_sell_crypto_by_quantity(symbol=asset_code, quantity=balances[asset_code],)
             verdict_sell = 'yes'
 
-        #ask_price_old, bid_price_old = curr_price['ask'], curr_price['bid']
-        ask_price_prediction, bid_price_prediction = predictions['ask'], predictions['bid']
-        sleep(100)
+        #old_price = curr_price['ask'], curr_price['bid']
+        price_prediction = predictions
+        sleep(bot.data_digger.dT)
         #ask_price_new, bid_price_new = curr_price['ask'], curr_price['bid']
         prices_log.append({
-            #'ask_old': ask_price_old, 'bid_old': bid_price_old,
-            'ask_prediction': ask_price_prediction, 'bid_prediction': bid_price_prediction,
-            #'ask_new': ask_price_new, 'bid_new': bid_price_new,
+            #'old_price' : old_price,
+            'prediction': price_prediction,
             'bought': verdict_buy, 'sold': verdict_sell
         })
 
     while True:
-        prediction_response = bot.get_prediction()
+        prediction_response = bot.get_prediction()[0]
         #curr_price = {'ask': prediction_response[0], 'bid': prediction_response[1]}
-        predictions = {'ask': prediction_response[0][0][0], 'bid': prediction_response[1][0][0]}
+        predictions = {'buy': prediction_response[0], 'sell': prediction_response[1], 'hold': prediction_response[2]}
         print(f"\u001b[34mPredictions are available:\n{bot.get_prediction()}\u001b[0m")
 
         balances = {'USD': float(rs.profiles.load_account_profile()["crypto_buying_power"]) - balance_offset, asset_code: float(locate_position_by_code(asset_code)["quantity"]) - equity_offset}
         print(f"Balance: ${balances['USD']}, BTC {balances[asset_code]}")
         trade_thread = Thread(target=make_trade, args=[balances])
         trade_thread.start()
-        sleep(100)
+        sleep(bot.data_digger.dT)
         for log_item in prices_log:
             print(log_item)
 
