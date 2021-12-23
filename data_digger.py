@@ -23,8 +23,8 @@ class DataDigger:
         self.ask_prices, self.bid_prices = [], []
 
         # Predictions by Pade approximation
-        self.ask_pade_predictions = [0 for i in range(self.coef_depth * 2 + self.prediction_delay + 1)]
-        self.bid_pade_predictions = [0 for i in range(self.coef_depth * 2 + self.prediction_delay + 1)]
+        self.ask_pade_predictions = [.0 for i in range(self.coef_depth * 2 + self.prediction_delay + 1)]
+        self.bid_pade_predictions = [.0 for i in range(self.coef_depth * 2 + self.prediction_delay + 1)]
 
 
         # Initial number of predictions are very wrong, since they
@@ -61,46 +61,46 @@ class DataDigger:
 
         sleep(self.dT)
 
-        if len(self.ask_prices) > self.prediction_delay + self.coef_depth: # + self._threshold_to_start_filling_table:
-            #ask_taylor_coefs = [spm.derivative(get_ask_price_change_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
-            #                    for i in range(self.coef_depth)]
-            #bid_taylor_coefs = [spm.derivative(get_bid_price_change_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
-            #                    for i in range(self.coef_depth)]
+        if len(self.ask_prices) > self.prediction_delay + self.coef_depth:
+            ask_taylor_coefs = [spm.derivative(get_ask_price_change_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
+                                for i in range(self.coef_depth)]
+            bid_taylor_coefs = [spm.derivative(get_bid_price_change_at, 0, dx=1.0, n=i, order=2 * i + 1) / self._factorials[i]
+                                for i in range(self.coef_depth)]
             #print(ask_taylor_coefs)
             #print(bid_taylor_coefs)
 
             # Pade approximation is a fraction with polynomials in both enumerator and denominator
             # Creating those polinomials for ask and bid prices
-            #ask_pade_numerator, ask_pade_denominator = spi.pade(ask_taylor_coefs,
-            #                                                    math.floor((2 * self.coef_depth - 1) / 4),
-            #                                                    math.floor((2 * self.coef_depth) / 4))
-            #bid_pade_numerator, bid_pade_denominator = spi.pade(bid_taylor_coefs,
-            #                                                    math.floor((2 * self.coef_depth - 1) / 4),
-            #                                                    math.floor((2 * self.coef_depth) / 4))
+            ask_pade_numerator, ask_pade_denominator = spi.pade(ask_taylor_coefs,
+                                                                math.floor((2 * self.coef_depth - 1) / 4),
+                                                                math.floor((2 * self.coef_depth) / 4))
+            bid_pade_numerator, bid_pade_denominator = spi.pade(bid_taylor_coefs,
+                                                                math.floor((2 * self.coef_depth - 1) / 4),
+                                                                math.floor((2 * self.coef_depth) / 4))
 
             # Converting numerator and denominator of ask Pade approx. from polinomials to values at the required point
-            #numerator_value = 0
-            #for i in range(len(ask_taylor_coefs)):
-            #    numerator_value += ask_pade_numerator[i] * ((2 * self.coef_depth) ** i)
+            numerator_value = 0
+            for i in range(len(ask_taylor_coefs)):
+                numerator_value += ask_pade_numerator[i] * ((2 * self.coef_depth) ** i)
 
-            #denominator_value = 0
-            #for i in range(len(ask_taylor_coefs)):
-            #    denominator_value += ask_pade_denominator[i] * ((2 * self.coef_depth) ** i)
-            #curr_ask_pade_prediction = numerator_value / denominator_value
-            #self.ask_pade_predictions.pop(0)
-            #self.ask_pade_predictions.append(curr_ask_pade_prediction)
+            denominator_value = 0
+            for i in range(len(ask_taylor_coefs)):
+                denominator_value += ask_pade_denominator[i] * ((2 * self.coef_depth) ** i)
+            curr_ask_pade_prediction = numerator_value / denominator_value
+            self.ask_pade_predictions.pop(0)
+            self.ask_pade_predictions.append(curr_ask_pade_prediction)
 
             # Converting numerator and denominator of bid Pade approx. from polinomials to values at the required point
-            #numerator_value = 0
-            #for i in range(len(bid_taylor_coefs)):
-            #    numerator_value += bid_pade_numerator[i] * ((2 * self.coef_depth) ** i)
+            numerator_value = 0
+            for i in range(len(bid_taylor_coefs)):
+                numerator_value += bid_pade_numerator[i] * ((2 * self.coef_depth) ** i)
 
-            #denominator_value = 0
-            #for i in range(len(bid_taylor_coefs)):
-            #    denominator_value += bid_pade_denominator[i] * ((2 * self.coef_depth) ** i)
-            #curr_bid_pade_prediction = numerator_value / denominator_value
-            #self.bid_pade_predictions.pop(0)
-            #self.bid_pade_predictions.append(curr_bid_pade_prediction)
+            denominator_value = 0
+            for i in range(len(bid_taylor_coefs)):
+                denominator_value += bid_pade_denominator[i] * ((2 * self.coef_depth) ** i)
+            curr_bid_pade_prediction = numerator_value / denominator_value
+            self.bid_pade_predictions.pop(0)
+            self.bid_pade_predictions.append(curr_bid_pade_prediction)
 
             self.ask_prices.pop(0)
             self.bid_prices.pop(0)
@@ -110,13 +110,13 @@ class DataDigger:
                 ask_return_data.extend(self.ask_prices[:-self.prediction_delay])
                 bid_return_data = [self.bid_prices[-1]]
                 bid_return_data.extend(self.bid_prices[:-self.prediction_delay])
-                #pade_predictions_return = [self.ask_pade_predictions[-self.prediction_delay], self.bid_pade_predictions[-self.prediction_delay]]
+                pade_predictions_return = [self.ask_pade_predictions[-self.prediction_delay], self.bid_pade_predictions[-self.prediction_delay]]
             else:
-                ask_return_data = self.ask_prices[:-self.prediction_delay]
-                bid_return_data = self.bid_prices[:-self.prediction_delay]
-                #pade_predictions_return = [self.ask_pade_predictions[-self.prediction_delay], self.bid_pade_predictions[-self.prediction_delay]]
+                ask_return_data = self.ask_prices[self.prediction_delay:]
+                bid_return_data = self.bid_prices[self.prediction_delay:]
+                pade_predictions_return = [self.ask_pade_predictions[-self.prediction_delay], self.bid_pade_predictions[-self.prediction_delay]]
 
-            result = ask_return_data + bid_return_data# + pade_predictions_return
+            result = ask_return_data + bid_return_data + pade_predictions_return
             return result
 
         print(f"\n\n\u001b[31mNOT ENOUGH PAST DATA TO GENERATE PADE APPROXIMATIONS. Run "
@@ -128,13 +128,13 @@ class DataDigger:
         self.data_file = open(self.file_name, 'w')
         self.data_file.write('ask')
         for i in range(self.coef_depth):
-            self.data_file.write('\ta' + str(i))
+            self.data_file.write(',a' + str(i))
 
-        self.data_file.write('\tbid')
+        self.data_file.write(',bid')
         for i in range(self.coef_depth):
-            self.data_file.write('\tb' + str(i))
+            self.data_file.write(',b' + str(i))
 
-        #self.data_file.write("\task_pade\tbid_pade\n")
+        self.data_file.write(",ask_pade,bid_pade")
 
         # Start predictions
         for trial in range(1, num_trials + self._threshold_to_start_filling_table + 1):
@@ -144,7 +144,7 @@ class DataDigger:
                 self.data_file.write("\n")
                 # Write everything into the data table
                 for price in last_row_data:
-                    self.data_file.write(str(price) + "\t")
+                    self.data_file.write(str(price) + ",")
                 print(f"Last recorded row:\n{last_row_data}")
 
         self.data_file.close()
@@ -157,8 +157,8 @@ def main():
     totp = pyotp.TOTP("YHYPKMLAURGON3I2").now()
     rs.login(email, password, mfa_code=totp)
 
-    data_digger = DataDigger(r"data.csv", asset_code='BTC', prediction_delay=20)
-    data_digger.fill_data_table(1500)
+    data_digger = DataDigger(r"data.csv", asset_code='BTC', precision=5, dT=1, prediction_delay=20)
+    data_digger.fill_data_table(400)
 
 if __name__ == "__main__":
     main ()

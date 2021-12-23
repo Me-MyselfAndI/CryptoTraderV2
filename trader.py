@@ -24,22 +24,24 @@ def convert_time_to_seconds(time):
 
 def cancel_garbage_orders(cancel_time_threshold, garbage_dT):
     while True:
-        all_orders = rs.get_all_open_crypto_orders()
-        print("\t")
-        if all_orders:
-            for i in range(len(all_orders)):
-                order = all_orders[i]
-                order_time = order["created_at"].replace('T', '.')
-                order_time = order_time.split(sep='.')[1].split(':')
+        try:
+            all_orders = rs.get_all_open_crypto_orders()
+            print("\t")
+            if all_orders:
+                for i in range(len(all_orders)):
+                    order = all_orders[i]
+                    order_time = order["created_at"].replace('T', '.')
+                    order_time = order_time.split(sep='.')[1].split(':')
 
-                real_time = datetime.now().strftime('%H:%M:%S').split(sep=":")
+                    real_time = datetime.now().strftime('%H:%M:%S').split(sep=":")
 
-                if convert_time_to_seconds(real_time) - convert_time_to_seconds(order_time) > cancel_time_threshold:
-                    print("\u001b[33mCancelling", i + 1, "-", order_time, "\u001b[0m")
-                    rs.cancel_crypto_order(order["id"])
+                    if convert_time_to_seconds(real_time) - convert_time_to_seconds(order_time) > cancel_time_threshold:
+                        print("\u001b[33mCancelling", i + 1, "-", order_time, "\u001b[0m")
+                        rs.cancel_crypto_order(order["id"])
+        except Exception as e:
+            print(f"Problems cancelling garbage orders: {e}")
         print("\n")
         sleep(garbage_dT)
-
 class TradingBot:
     data_digger = None
 
@@ -57,7 +59,7 @@ class TradingBot:
         if self.data_digger is not None:
             self.data_digger.data_file.close()
 
-        new_data_digger = DataDigger(self.temp_file_name, self.asset_code, dT=5, prediction_delay=100)
+        new_data_digger = DataDigger(self.temp_file_name, self.asset_code, dT=1, prediction_delay=20)
         new_data_digger.fill_data_table(num_trials=num_trials)
 
         temp_data_file = open(self.temp_file_name, 'r')
@@ -91,7 +93,7 @@ class TradingBot:
 def repeatedly_update_table(bot):
     while True:
         print('\u001b[33m\n\n\nUPDATING TABLE\n\n\n')
-        bot.update_table(num_trials=1500)
+        bot.update_table(num_trials=500)
         print("\n\n\nFINISHED UPDATING TABLE\u001b[0m\n\n\n")
 
 
