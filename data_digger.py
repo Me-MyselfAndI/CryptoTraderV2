@@ -158,7 +158,7 @@ def main():
     rs.login(email, password, mfa_code=totp)
 
     data_digger = DataDigger(r"data.csv", asset_code='BTC', precision=5, dT=1, prediction_delay=20)
-    data_digger.fill_data_table(800)
+    data_digger.fill_data_table(6000)
 
 if __name__ == "__main__":
     main ()
